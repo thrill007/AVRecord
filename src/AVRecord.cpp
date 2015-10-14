@@ -133,9 +133,9 @@ int AVRecorder::dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t fram
 }
 int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, int key_frame) {
 	if (packet_cache == NULL)
-		packet_cache = (AVPacket*)malloc(COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS*sizeof(AVPacket));
+		packet_cache = new AVPacket[COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS*sizeof(AVPacket)];
 	if (audio_dump_packets < AUDIO_DUMP_PACKETS || video_dump_packets < VIDEO_DUMP_PACKETS) {
-		uint8_t *data = (uint8_t*)av_malloc(frame_size);
+		uint8_t *data = new uint8_t[frame_size];
 		memcpy(data, frame_data, frame_size);
 		packet_cache[cached_packets].data = data;
 		packet_cache[cached_packets].size = frame_size;
@@ -175,14 +175,13 @@ int AVRecorder::open_input_file(AVFormatContext **ifmt_ctx, const char *input_fi
 	}
 	return 0;
 }
-int AVRecorder::open_output_file(const char *output_file, int *v_indx_in, int *a_indx_in, int *v_indx_out, int *a_indx_out) {
+
+
+int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out, int *a_indx_out) {
 	AVOutputFormat *ofmt;
 	if (ofmt_ctx == NULL) {
 		int ret;
 		//Output
-		if (output_file != NULL /*|| strcmp(output_file, "") != 0 || strcmp(output_file, " ") != 0*/) {
-			output = output_file;
-		}
 		avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, output);
 		if (!ofmt_ctx) {
 			printf( "Could not create output context\n");
@@ -343,17 +342,25 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 	return 0;
 }
 
+/*** lifeng:
+ * @parm ofile: output file format, the supported format are:
+ * mp4, ts, mov, avi, mkv,wmv, asf
+ */
+int AVRecorder::prepare(const char *ofile) {
+	output = ofile;
+	return 0;
+}
 
 /****
  * lifeng:
  * write a video / audio frame into a output file
- * @parm pFrameBuffer raw av data input buffer
- * @parm ulFrameSize a/v frame size
- * @parm illPTS pts value
- * @parm illDTS dts value
- * @parm iMediaType 0:audio 1:video
- * @parm flag 0: non-i frame video or audio, 1: i-frame vide, 2: means stop the recording
- * @note .
+ * @parm frame_data encoded av data
+ * @parm frame_size a/v frame size
+ * @parm pts pts value
+ * @parm dts dts value
+ * @parm frame_type 0:audio 1:video
+ * @parm flag 0: non-i frame video or audio, 1: i-frame video, 2: means stop the recording
+ * @note
  */
 int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, uint64_t dts, uint8_t frame_type, uint8_t flag) {
 
@@ -380,7 +387,7 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	if (open_input_file(&ifmt_ctx_a, audio_dump) < 0) {
 		return -1;
 	}
-	if (open_output_file(NULL, &v_indx_in, &a_indx_in, &v_indx_out, &a_indx_out)) {
+	if (open_output_file(&v_indx_in, &a_indx_in, &v_indx_out, &a_indx_out)) {
 		return -1;
 	}
 	if (flush_cached_packets(v_indx_in, a_indx_in, v_indx_out, a_indx_out, &indx_out) < 0)
@@ -426,7 +433,6 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 
 	pkt.pos = -1;
 	pkt.stream_index=indx_out;
-	printf("index:%d\n", indx_out);
 	//Write
 	if (av_interleaved_write_frame(ofmt_ctx, &pkt) < 0) {
 		printf( "Error muxing packet\n");

@@ -57,12 +57,12 @@ private:
 public:
 	AVRecorder();
 	~AVRecorder();
-	int prepare(uint8_t *frame_data);
+	int prepare(const char *ofile);
 	int record(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, uint8_t flag);
 	int done();
 private:
 	int open_input_file(AVFormatContext **ifmt_ctx, const char *input_file);
-	int open_output_file(const char *output_file, int *v_indx_in, int *a_indx_in, int *v_indx_out, int *a_indx_out);
+	int open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out, int *a_indx_out);
 	int dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t frame_type, const char *dump_file);
 	int cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, int key_frame);
 	int flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_out, int a_indx_out, int *indx_out);
