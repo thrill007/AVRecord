@@ -14,6 +14,8 @@ extern "C"
 #include "ReadFrame.h"
 #include "libavformat/avformat.h"
 #include "libavutil/mathematics.h"
+#include "libavcodec/avcodec.h"
+#include "libavfilter/avfilter.h"
 #ifdef __cplusplus
 };
 #endif
@@ -40,7 +42,8 @@ private:
 	const char *video_dump;
 	const char* audio_dump;
 	const char* output;
-
+	uint8_t out_video_index;
+	uint8_t out_audio_index;
 	FILE *fp_dump_v;
 	FILE *fp_dump_a;
 
@@ -53,6 +56,34 @@ private:
 
 	AVPacket *packet_cache;
 	int cached_consumed;
+
+
+	class TransCoding {
+	private:
+		typedef struct FilteringContext {
+			AVFilterContext *buffersink_ctx;
+			AVFilterContext *buffersrc_ctx;
+			AVFilterGraph *filter_graph;
+		} FilteringContext;
+		FilteringContext *filter_ctx;
+		AVRecorder *owner;
+	    AVCodecID aud_codec_id;
+
+	private:
+		int init_filter(FilteringContext* fctx, AVCodecContext *dec_ctx, AVCodecContext *enc_ctx, const char *filter_spec);
+		int filter_encode_write_frame(AVFrame *frame, unsigned int stream_index);
+		int encode_write_frame(AVFrame *filt_frame, unsigned int stream_index, int*got_frame);
+		int flush_encoder(unsigned int in_indx);
+	public:
+		TransCoding();
+		TransCoding(AVRecorder *owner);
+		~TransCoding();
+		AVCodecID get_codec_id();
+		int init_filters(AVFormatContext *ifmt_ctx);
+		int do_transcoding(AVFormatContext *ifmt_ctx, AVPacket *pkt,int in_index, int out_index);
+		bool is_filter_ctx_initialized();
+	};
+	TransCoding *transcoding;
 
 public:
 	AVRecorder();

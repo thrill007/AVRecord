@@ -77,6 +77,8 @@ AVRecorder::AVRecorder() {
 	ofmt_ctx = NULL;
 	in_stream = NULL;
 	out_stream = NULL;
+	out_video_index = -1;
+	out_audio_index = -1;
 	video_dump = "video_dump.h264";
 	audio_dump = "audio_dump.aac";
 	output = "output.mp4";
@@ -89,7 +91,7 @@ AVRecorder::AVRecorder() {
 	cached_consumed = 0;
 	aacbsfc = NULL;
 	h264bsfc = NULL;
-
+	transcoding = new TransCoding(this);
 }
 
 AVRecorder::~AVRecorder() {
@@ -207,12 +209,12 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 				}
 
 				*v_indx_out=out_stream->index;
+				out_video_index = *v_indx_out;
 				//Copy the settings of AVCodecContext
 				if (avcodec_copy_context(out_stream->codec, in_stream->codec) < 0) {
 					printf( "Failed to copy context from input to output stream codec context\n");
 					error_process();
 					return -1;
-
 				}
 
 				out_stream->codec->codec_tag = 0;
@@ -239,6 +241,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 
 				}
 				*a_indx_out=out_stream->index;
+				out_audio_index = *a_indx_out;
 				//Copy the settings of AVCodecContext
 				if (avcodec_copy_context(out_stream->codec, in_stream->codec) < 0) {
 					printf( "Failed to copy context from input to output stream codec context\n");
@@ -250,6 +253,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 				if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
 					out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
 
+				out_stream->codec->codec_id = transcoding->get_codec_id();	//将音频codec_id强制成aac
 				break;
 			}
 		}
@@ -284,6 +288,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 
 int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_out, int a_indx_out, int *indx_out) {
 
+	int ret;
 	AVPacket *pkt;
 	AVFormatContext *ifmt_ctx = NULL;
 	AVStream *in_stream, *out_stream;
@@ -292,13 +297,13 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 		for (int i=0; i<cached_packets; i++) {
 			pkt = &(packet_cache[i]);
 			if (pkt->stream_index == 0) {	//audio
-
 				ifmt_ctx=ifmt_ctx_a;
 				*indx_out=a_indx_out;
 				in_stream  = ifmt_ctx->streams[a_indx_in];
+				transcoding->do_transcoding(ifmt_ctx_a, pkt, a_indx_in, *indx_out);
+				return 0;
 			}
 			else {		//=1:video
-
 				ifmt_ctx=ifmt_ctx_v;
 				*indx_out=v_indx_out;
 				in_stream  = ifmt_ctx->streams[v_indx_in];
@@ -318,14 +323,17 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 //			ptr->duration = av_rescale_q_rnd(ptr->duration, ar,out_stream->time_base,	(AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
 
 			//FIX:Bitstream Filter
+			if (pkt->stream_index == 1) {
 #if USE_H264BSF
-			av_bitstream_filter_filter(h264bsfc, in_stream->codec, NULL, &(pkt->data), &(pkt->size), pkt->data, pkt->size, 0);
+				av_bitstream_filter_filter(h264bsfc, in_stream->codec, NULL, &(pkt->data), &(pkt->size), pkt->data, pkt->size, 0);
 #endif
+			}
+			else {
 #if USE_AACBSF
 			//		av_bitstream_filter_filter(aacbsfc, out_stream->codec, NULL, &pkt1.data, &pkt1.size, pkt1.data, pkt1.size, 0);
-			av_bitstream_filter_filter(aacbsfc, out_stream->codec, NULL, &(pkt->data), &(pkt->size), pkt->data, pkt->size, 0);
+				av_bitstream_filter_filter(aacbsfc, out_stream->codec, NULL, &(pkt->data), &(pkt->size), pkt->data, pkt->size, 0);
 #endif
-
+			}
 			pkt->pos = -1;
 			pkt->stream_index=*indx_out;
 
@@ -390,6 +398,10 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	if (open_output_file(&v_indx_in, &a_indx_in, &v_indx_out, &a_indx_out)) {
 		return -1;
 	}
+	if (transcoding->is_filter_ctx_initialized() == false)
+		if (transcoding->init_filters(ifmt_ctx_a) < 0)	//todo:这里缺少后续处理，主要是一些释放过程
+			return -1;
+
 	if (flush_cached_packets(v_indx_in, a_indx_in, v_indx_out, a_indx_out, &indx_out) < 0)
 		return -1;
 
@@ -412,9 +424,27 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	pkt.size = frame_size;
 
 	pkt.pts = pts;
-//	AVRational time_base1=in_stream->time_base;
-//	int64_t calc_duration=(double)AV_TIME_BASE/av_q2d(in_stream->r_frame_rate);
-//	pkt.duration=(double)calc_duration/(double)(av_q2d(time_base1)*AV_TIME_BASE);
+
+	//FIX:Bitstream Filter
+	if (frame_type == 1) {
+#if USE_H264BSF
+		av_bitstream_filter_filter(h264bsfc, in_stream->codec, NULL, &pkt.data, &pkt.size, pkt.data, pkt.size, 0);
+#endif
+	}
+	else {
+#if USE_AACBSF
+		av_bitstream_filter_filter(aacbsfc, out_stream->codec, NULL, &pkt.data, &pkt.size, pkt.data, pkt.size, 0);
+#endif
+	}
+
+	if (frame_type == 0) {
+		transcoding->do_transcoding(ifmt_ctx_a, &pkt, a_indx_in, indx_out);	//todo: 这里不太规范，以后要改正
+		return 0;
+	}
+
+	//	AVRational time_base1=in_stream->time_base;
+	//	int64_t calc_duration=(double)AV_TIME_BASE/av_q2d(in_stream->r_frame_rate);
+	//	pkt.duration=(double)calc_duration/(double)(av_q2d(time_base1)*AV_TIME_BASE);
 
 	//Convert PTS/DTS
 	pkt.dts = pkt.pts;
@@ -422,14 +452,6 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	pkt.pts = av_rescale_q_rnd(pkt.pts, ar, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
 	pkt.dts = av_rescale_q_rnd(pkt.dts, ar, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
 	pkt.duration = av_rescale_q(pkt.duration, ar, out_stream->time_base);
-
-	//FIX:Bitstream Filter
-#if USE_H264BSF
-	av_bitstream_filter_filter(h264bsfc, in_stream->codec, NULL, &pkt.data, &pkt.size, pkt.data, pkt.size, 0);
-#endif
-#if USE_AACBSF
-	av_bitstream_filter_filter(aacbsfc, out_stream->codec, NULL, &pkt.data, &pkt.size, pkt.data, pkt.size, 0);
-#endif
 
 	pkt.pos = -1;
 	pkt.stream_index=indx_out;
@@ -472,6 +494,8 @@ int main(int argc, char* argv[]) {
 	int         iFrameTypeAudio = 0;
 
 	av_register_all();
+    avfilter_register_all();
+
 	CReadFrame* pReadFrameVideo = new CReadFrame();
 	CReadFrame* pReadFrameAudio = new CReadFrame();
 
