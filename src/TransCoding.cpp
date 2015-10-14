@@ -58,9 +58,7 @@ int AVRecorder::TransCoding::init_filter(FilteringContext* fctx, AVCodecContext 
                 dec_ctx->time_base.num, dec_ctx->time_base.den,
                 dec_ctx->sample_aspect_ratio.num,
                 dec_ctx->sample_aspect_ratio.den);
-
-        ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in",
-                args, NULL, filter_graph);
+        ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in",  args, NULL, filter_graph);
         if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot create buffer source\n");
             goto end;
@@ -93,11 +91,11 @@ int AVRecorder::TransCoding::init_filter(FilteringContext* fctx, AVCodecContext 
             dec_ctx->channel_layout = av_get_default_channel_layout(dec_ctx->channels);
         snprintf(args, sizeof(args),
         		"time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%"PRIx64,
-        		dec_ctx->time_base.num, dec_ctx->time_base.den, dec_ctx->sample_rate,
+        		dec_ctx->time_base.num, /*dec_ctx->time_base.den*/8000, dec_ctx->sample_rate,
         		av_get_sample_fmt_name(dec_ctx->sample_fmt),
         		dec_ctx->channel_layout);
-        ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in",
-                args, NULL, filter_graph);
+
+        ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in", args, NULL, filter_graph);
         if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot create audio buffer source\n");
             goto end;
@@ -117,7 +115,6 @@ int AVRecorder::TransCoding::init_filter(FilteringContext* fctx, AVCodecContext 
             av_log(NULL, AV_LOG_ERROR, "Cannot set output sample format\n");
             goto end;
         }
-
         ret = av_opt_set_bin(buffersink_ctx, "channel_layouts",
                 (uint8_t*)&enc_ctx->channel_layout,
                 sizeof(enc_ctx->channel_layout), AV_OPT_SEARCH_CHILDREN);
@@ -133,6 +130,7 @@ int AVRecorder::TransCoding::init_filter(FilteringContext* fctx, AVCodecContext 
             av_log(NULL, AV_LOG_ERROR, "Cannot set output sample rate\n");
             goto end;
         }
+
     } else {
         ret = AVERROR_UNKNOWN;
         goto end;
@@ -194,8 +192,6 @@ int AVRecorder::TransCoding::init_filters(AVFormatContext *ifmt_ctx)
         if (!(in_codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO
                 || in_codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO))
             continue;
-
-
         if (in_codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
             filter_spec = "null"; /* passthrough (dummy) filter for video */
             out_codec_ctx = owner->ofmt_ctx->streams[owner->out_video_index]->codec;
@@ -308,7 +304,6 @@ int AVRecorder::TransCoding::flush_encoder(unsigned int in_indx)
 int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket *pkt, int in_indx, int out_indx) {
 	int got_frame;
 	int ret;
-
     if (filter_ctx[in_indx].filter_graph) {
         av_log(NULL, AV_LOG_DEBUG, "Going to re-encode&filter the frame\n");
     	AVFrame *frame = av_frame_alloc();
@@ -316,13 +311,13 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
             ret = AVERROR(ENOMEM);
             return -1;
         }
-
+        AVRational ar = {1, 1000};
         pkt->dts = av_rescale_q_rnd(pkt->dts,
-                ifmt_ctx->streams[in_indx]->time_base,
+                /*ifmt_ctx->streams[in_indx]->time_base,*/ar,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
                  (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
         pkt->pts = av_rescale_q_rnd(pkt->pts,
-                ifmt_ctx->streams[in_indx]->time_base,
+                /*ifmt_ctx->streams[in_indx]->time_base*/ar,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
                 (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
 
@@ -331,6 +326,8 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
            av_frame_free(&frame);
            av_log(NULL, AV_LOG_ERROR, "Decoding failed\n");
         }
+        printf("ccccccccccc....\n");
+
         if (got_frame) {
         	frame->pts = av_frame_get_best_effort_timestamp(frame);
         	ret= filter_encode_write_frame(frame, out_indx);

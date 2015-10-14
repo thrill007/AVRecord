@@ -44,7 +44,7 @@ FIX: H.264 in some container format (FLV, MP4, MKV etc.) need
 H.264 in some container (MPEG2TS) don't need this BSF.
 */
 //'1': Use H.264 Bitstream Filter
-#define USE_H264BSF 1
+#define USE_H264BSF 0
 
 /*
 FIX:AAC in some container format (FLV, MP4, MKV etc.) need
@@ -137,7 +137,7 @@ int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t
 	if (packet_cache == NULL)
 		packet_cache = new AVPacket[COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS*sizeof(AVPacket)];
 	if (audio_dump_packets < AUDIO_DUMP_PACKETS || video_dump_packets < VIDEO_DUMP_PACKETS) {
-		uint8_t *data = new uint8_t[frame_size];
+		uint8_t *data = new uint8_t[frame_size + FF_INPUT_BUFFER_PADDING_SIZE];
 		memcpy(data, frame_data, frame_size);
 		packet_cache[cached_packets].data = data;
 		packet_cache[cached_packets].size = frame_size;
@@ -171,6 +171,7 @@ int AVRecorder::open_input_file(AVFormatContext **ifmt_ctx, const char *input_fi
 			return -1;
 
 		}
+
 		printf("===========Input Information==========\n");
 		av_dump_format(*ifmt_ctx, 0, input_file, 0);
 		printf("======================================\n");
@@ -181,6 +182,9 @@ int AVRecorder::open_input_file(AVFormatContext **ifmt_ctx, const char *input_fi
 
 int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out, int *a_indx_out) {
 	AVOutputFormat *ofmt;
+	AVCodecContext *dec_ctx, *enc_ctx;
+	AVCodec *encoder;
+
 	if (ofmt_ctx == NULL) {
 		int ret;
 		//Output
@@ -228,9 +232,37 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 
 		for (int i = 0; i < ifmt_ctx_a->nb_streams; i++) {
 			//Create output AVStream according to input AVStream
-			if(ifmt_ctx_a->streams[i]->codec->codec_type==AVMEDIA_TYPE_AUDIO){
-				AVStream *in_stream = ifmt_ctx_a->streams[i];
-				AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
+			AVStream *in_stream = ifmt_ctx_a->streams[i];
+			dec_ctx = ifmt_ctx_a->streams[i]->codec;
+			avcodec_alloc_context3();
+			if(dec_ctx->codec_type==AVMEDIA_TYPE_AUDIO){
+				/*** 初始化in stream的codec 相关, open decoder***/
+				encoder = avcodec_find_decoder(dec_ctx->codec_id);
+				ret = avcodec_open2(dec_ctx, encoder, NULL);
+				if (ret < 0) {
+					av_log(NULL, AV_LOG_ERROR, "Failed to open decoder for stream #%u\n", i);
+					return ret;
+				}
+
+	            /* In this example, we transcode to same properties (picture size, sample rate etc.). These properties can be changed for output
+	             * streams easily using filters */
+
+				AVStream *out_stream = avformat_new_stream(ofmt_ctx, dec_ctx->codec);
+				enc_ctx = out_stream->codec;
+                enc_ctx->sample_rate = dec_ctx->sample_rate;
+                enc_ctx->channel_layout = dec_ctx->channel_layout;
+                enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
+                /* take first format from list of supported formats */
+                enc_ctx->sample_fmt = encoder->sample_fmts[0];
+                enc_ctx->time_base = (AVRational){1, enc_ctx->sample_rate};
+                /* Third parameter can be used to pass settings to encoder */
+                ret = avcodec_open2(enc_ctx, encoder, NULL);
+                if (ret < 0) {
+                    av_log(NULL, AV_LOG_ERROR, "Cannot open video encoder for stream #%u\n", i);
+                    return ret;
+                }
+
+
 				*a_indx_in=i;
 
 				if (!out_stream) {
@@ -240,10 +272,11 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 					return -1;
 
 				}
+
 				*a_indx_out=out_stream->index;
 				out_audio_index = *a_indx_out;
 				//Copy the settings of AVCodecContext
-				if (avcodec_copy_context(out_stream->codec, in_stream->codec) < 0) {
+				if (avcodec_copy_context(enc_ctx, dec_ctx) < 0) {
 					printf( "Failed to copy context from input to output stream codec context\n");
 					error_process();
 					return -1;
@@ -291,7 +324,6 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 	int ret;
 	AVPacket *pkt;
 	AVFormatContext *ifmt_ctx = NULL;
-	AVStream *in_stream, *out_stream;
 	/*** 将队列中缓存的音视频包先行mux，然后再处理当前的pFrameBuffer ***/
 	if (cached_consumed == 0) {
 		for (int i=0; i<cached_packets; i++) {
@@ -398,10 +430,10 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	if (open_output_file(&v_indx_in, &a_indx_in, &v_indx_out, &a_indx_out)) {
 		return -1;
 	}
-	if (transcoding->is_filter_ctx_initialized() == false)
+	if (transcoding->is_filter_ctx_initialized() == false) {
 		if (transcoding->init_filters(ifmt_ctx_a) < 0)	//todo:这里缺少后续处理，主要是一些释放过程
 			return -1;
-
+	}
 	if (flush_cached_packets(v_indx_in, a_indx_in, v_indx_out, a_indx_out, &indx_out) < 0)
 		return -1;
 
@@ -495,6 +527,7 @@ int main(int argc, char* argv[]) {
 
 	av_register_all();
     avfilter_register_all();
+    avcodec_register_all();
 
 	CReadFrame* pReadFrameVideo = new CReadFrame();
 	CReadFrame* pReadFrameAudio = new CReadFrame();
