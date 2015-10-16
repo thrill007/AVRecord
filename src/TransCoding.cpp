@@ -52,42 +52,7 @@ int AVRecorder::TransCoding::init_filter(FilteringContext* fctx, AVCodecContext 
         ret = AVERROR(ENOMEM);
         goto end;
     }
-    if (dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
-        buffersrc = avfilter_get_by_name("buffer");
-        buffersink = avfilter_get_by_name("buffersink");
-        if (!buffersrc || !buffersink) {
-            av_log(NULL, AV_LOG_ERROR, "filtering source or sink element not found\n");
-            ret = AVERROR_UNKNOWN;
-            goto end;
-        }
-
-        snprintf(args, sizeof(args),
-                "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
-                dec_ctx->width, dec_ctx->height, dec_ctx->pix_fmt,
-                dec_ctx->time_base.num, dec_ctx->time_base.den,
-                dec_ctx->sample_aspect_ratio.num,
-                dec_ctx->sample_aspect_ratio.den);
-        ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in",  args, NULL, filter_graph);
-        if (ret < 0) {
-            av_log(NULL, AV_LOG_ERROR, "Cannot create buffer source\n");
-            goto end;
-        }
-
-        ret = avfilter_graph_create_filter(&buffersink_ctx, buffersink, "out",
-                NULL, NULL, filter_graph);
-        if (ret < 0) {
-            av_log(NULL, AV_LOG_ERROR, "Cannot create buffer sink\n");
-            goto end;
-        }
-
-        ret = av_opt_set_bin(buffersink_ctx, "pix_fmts",
-                (uint8_t*)&enc_ctx->pix_fmt, sizeof(enc_ctx->pix_fmt),
-                AV_OPT_SEARCH_CHILDREN);
-        if (ret < 0) {
-            av_log(NULL, AV_LOG_ERROR, "Cannot set output pixel format\n");
-            goto end;
-        }
-    } else if (dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+    if (dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
         buffersrc = avfilter_get_by_name("abuffer");
         buffersink = avfilter_get_by_name("abuffersink");
         if (!buffersrc || !buffersink) {
@@ -100,7 +65,9 @@ int AVRecorder::TransCoding::init_filter(FilteringContext* fctx, AVCodecContext 
             dec_ctx->channel_layout = av_get_default_channel_layout(dec_ctx->channels);
         snprintf(args, sizeof(args),
         		"time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%"PRIx64,
-        		dec_ctx->time_base.num, /*dec_ctx->time_base.den*/8000, dec_ctx->sample_rate,
+        		dec_ctx->time_base.num,
+        		dec_ctx->time_base.den,
+        		dec_ctx->sample_rate,
         		av_get_sample_fmt_name(dec_ctx->sample_fmt),
         		dec_ctx->channel_layout);
 
@@ -196,19 +163,13 @@ int AVRecorder::TransCoding::init_filters(AVFormatContext *ifmt_ctx)
         filter_ctx[i].buffersrc_ctx  = NULL;
         filter_ctx[i].buffersink_ctx = NULL;
         filter_ctx[i].filter_graph   = NULL;
-
         in_codec_ctx = ifmt_ctx->streams[i]->codec;
         if (!(in_codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO
                 || in_codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO))
             continue;
-        if (in_codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
-            filter_spec = "null"; /* passthrough (dummy) filter for video */
-            out_codec_ctx = owner->ofmt_ctx->streams[owner->out_video_index]->codec;
-        }
-        else {
-            filter_spec = "anull"; /* passthrough (dummy) filter for audio */
-            out_codec_ctx = owner->ofmt_ctx->streams[owner->out_audio_index]->codec;
-        }
+        filter_spec = "anull"; /* passthrough (dummy) filter for audio */
+        out_codec_ctx = owner->ofmt_ctx->streams[owner->out_audio_index]->codec;
+
         ret = init_filter(&filter_ctx[i], in_codec_ctx, /*owner->ofmt_ctx->streams[i]->codec*/out_codec_ctx, filter_spec);
         if (ret)
             return ret;
@@ -232,13 +193,6 @@ int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned in
 
 	AVCodecContext *enc_ctx = owner->ofmt_ctx->streams[stream_index]->codec;
 
-//    enc_ctx->channel_layout = 1;
-//    printf("sample rate:%d, channel_layout:%lld, channels:%d, sample_format:%d, time_base:%d\n",
-//    		enc_ctx->sample_rate,
-//    		enc_ctx->channel_layout,
-//    		enc_ctx->channels,
-//    		enc_ctx->sample_fmt,
-//    		enc_ctx->time_base.den);
 //    printf("frame size:%d\n",filt_frame->nb_samples);
 
 	ret = avcodec_encode_audio2(enc_ctx, &enc_pkt, filt_frame, got_frame);
@@ -307,7 +261,6 @@ int AVRecorder::TransCoding::filter_encode_write_frame(AVFrame *frame, unsigned 
 			break;
 		}
 		filt_frame->pict_type = AV_PICTURE_TYPE_NONE;
-//		printf("frame pts:%lld\n",filt_frame->pts);
 		ret =encode_write_frame(filt_frame, owner->out_audio_index, NULL);
 		if (ret < 0)
 			break;
@@ -335,12 +288,14 @@ int AVRecorder::TransCoding::flush_encoder(unsigned int in_indx)
 }
 
 int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket *pkt, int in_indx, int out_indx) {
+	static FILE *fp_pcm = NULL;
+
 	int got_frame;
 	int ret;
     if (filter_ctx[in_indx].filter_graph) {
         av_log(NULL, AV_LOG_DEBUG, "Going to re-encode&filter the frame\n");
-    	AVFrame *frame = av_frame_alloc();
-        if (!frame) {
+    	AVFrame *decoded_frame = av_frame_alloc();
+        if (!decoded_frame) {
             ret = AVERROR(ENOMEM);
             return -1;
         }
@@ -352,23 +307,39 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
                 ifmt_ctx->streams[in_indx]->time_base,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
                 (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
-        ret = avcodec_decode_audio4(owner->in_stream->codec, frame, &got_frame, pkt);
+        ret = avcodec_decode_audio4(owner->in_stream->codec, decoded_frame, &got_frame, pkt);
         if (ret < 0) {
-           av_frame_free(&frame);
+           av_frame_free(&decoded_frame);
            av_log(NULL, AV_LOG_ERROR, "Decoding failed\n");
            return -1;
         }
         if (got_frame) {
-        	frame->pts = av_frame_get_best_effort_timestamp(frame);
-        	ret= filter_encode_write_frame(frame, in_indx);
-        	av_frame_free(&frame);
+        	decoded_frame->pts = av_frame_get_best_effort_timestamp(decoded_frame);
+#if 1
+        	ret= filter_encode_write_frame(decoded_frame, in_indx);
+#else
+        	if (!fp_pcm) {
+        		fp_pcm = fopen("audio.pcm", "wb");
+        	}
+            int data_size = av_samples_get_buffer_size(NULL, owner->in_stream->codec->channels,
+                                                       decoded_frame->nb_samples,
+                                                       owner->in_stream->codec->sample_fmt, 1);
+            if (data_size < 0) {
+                /* This should not occur, checking just for paranoia */
+                fprintf(stderr, "Failed to calculate data size\n");
+                exit(1);
+            }
+            fwrite(decoded_frame->data[0], 1, data_size, fp_pcm);
+
+#endif
+        	av_frame_free(&decoded_frame);
         	if (ret< 0)
         		return -1;	//todo:这里缺少后续处理主要是一些释放过程
         }
         else {
-        	av_frame_free(&frame);
+        	av_frame_free(&decoded_frame);
         }
-
+#if 0
         /* flush filters and encoders */
         for (int i = 0; i < ifmt_ctx->nb_streams; i++) {
             /* flush filter */
@@ -386,9 +357,11 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
                 return -1;
             }
         }
+#endif
     	return 0;
-
     }
+
     return 0;
+#
 }
 

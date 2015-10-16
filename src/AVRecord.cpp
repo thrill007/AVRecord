@@ -82,7 +82,7 @@ AVRecorder::AVRecorder() {
 	out_audio_index = -1;
 	video_dump = "video_dump.h264";
 	audio_dump = "audio_dump.g711a";
-	output = "output.mp4";
+	output = "audio.aac";
 	video_dump_packets = 0;
 	audio_dump_packets = 0;
 	fp_dump_a = NULL;
@@ -101,23 +101,13 @@ AVRecorder::~AVRecorder() {
 }
 int AVRecorder::dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t frame_type, const char *dump_file) {
 
-	if (strstr(dump_file, "video") != NULL && !fp_dump_v) {
-		fp_dump_v = fopen(video_dump, "wb");
-		if (!fp_dump_v) return -1;
-		//		queue = InitQueue();
-	}
-	else if (strstr(dump_file, "audio") != NULL && !fp_dump_a) {
+	if (!fp_dump_a && strstr(dump_file, "audio") != NULL) {
 		fp_dump_a = fopen(audio_dump, "wb");
 		if (!fp_dump_a) return -1;
 	}
 	//dump xx 个音频包
-	if (frame_type == 1) {
-		if (audio_dump_packets++ < AUDIO_DUMP_PACKETS)
-			fwrite(frame_data, 1, frame_size, fp_dump_a);
-	}
-	//dump xx 个视频包
-	else if (video_dump_packets++ < VIDEO_DUMP_PACKETS /*&& flag == 1*/){
-		fwrite(frame_data, 1, frame_size, fp_dump_v);
+	if (frame_type == 0 && (audio_dump_packets++ < AUDIO_DUMP_PACKETS)) {
+		fwrite(frame_data, 1, frame_size, fp_dump_a);
 	}
 
 	if (audio_dump_packets >= AUDIO_DUMP_PACKETS) {
@@ -125,12 +115,6 @@ int AVRecorder::dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t fram
 		fclose(fp_dump_a);
 		return 0;
 	}
-	if (video_dump_packets >= VIDEO_DUMP_PACKETS) {
-		fflush(fp_dump_v);
-		fclose(fp_dump_v);
-		return 0;
-	}
-
 	return -1;
 }
 int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, int key_frame) {
@@ -143,9 +127,6 @@ int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t
 		packet_cacher[cached_packets].size = frame_size;
 		packet_cacher[cached_packets].pts = pts;
 		packet_cacher[cached_packets].dts = dts;
-		if (key_frame == 1) { //case i frame
-			packet_cacher[cached_packets].flags |= AV_PKT_FLAG_KEY;
-		}
 		packet_cacher[cached_packets++].stream_index = frame_type;
 		return -1;
 	}
@@ -157,13 +138,10 @@ int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t
 
 int AVRecorder::open_input_file(AVFormatContext **ifmt_ctx, const char *input_file) {
 	int ret;
+	AVCodecContext *codec_ctx;
 	if (*ifmt_ctx == NULL) {
-#if TEST_G711A
-			ifmt_ctx_a = avformat_alloc_context();
-			ifmt_ctx_a->iformat = av_find_input_format("alaw");
-//			ifmt_ctx_a->bit_rate = 44.1*1024*16;
-//			ifmt_ctx_a->audio_codec_id = AV_CODEC_ID_PCM_ALAW;
-#endif
+		ifmt_ctx_a = avformat_alloc_context();
+		ifmt_ctx_a->iformat = av_find_input_format("alaw");
 		if ((ret = avformat_open_input(ifmt_ctx, input_file, 0, 0)) < 0) {
 			printf( "Could not open input file....%s\n", input_file);
 			error_process();
@@ -174,6 +152,31 @@ int AVRecorder::open_input_file(AVFormatContext **ifmt_ctx, const char *input_fi
 			error_process();
 			return -1;
 		}
+
+
+	    for (int i = 0; i < (*ifmt_ctx)->nb_streams; i++) {
+	        AVStream *stream;
+
+	        stream = (*ifmt_ctx)->streams[i];
+	        codec_ctx = stream->codec;
+	        /* Reencode video & audio and remux subtitles etc. */
+	        if (codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+	            /* Open decoder */
+	            ret = avcodec_open2(codec_ctx, avcodec_find_decoder(codec_ctx->codec_id), NULL);
+	            if (ret < 0) {
+	                av_log(NULL, AV_LOG_ERROR, "Failed to open decoder for stream #%u\n", i);
+	                return ret;
+	            }
+	        }
+	    }
+        printf("intput:\ntime_base=%d/%d:sample2 rate:%d, channel_layout:%lld, channels:%d, sample_format:%d, time_base:%d\n",
+        		codec_ctx->time_base.num,
+        		codec_ctx->time_base.den,
+        		codec_ctx->sample_rate,
+        		codec_ctx->channel_layout,
+        		codec_ctx->channels,
+        		codec_ctx->sample_fmt,
+        		codec_ctx->time_base.den);
 
 		printf("===========Input Information==========\n");
 		av_dump_format(*ifmt_ctx, 0, input_file, 0);
@@ -187,7 +190,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 	AVOutputFormat *ofmt;
 	AVCodecContext *dec_ctx, *enc_ctx;
 	AVCodec *encoder;
-
+	AVStream *out_stream;
 	if (ofmt_ctx == NULL) {
 		int ret;
 		//Output
@@ -199,74 +202,54 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 			return -1;
 
 		}
+
 		ofmt = ofmt_ctx->oformat;
-#ifndef TEST_G711A
-		for (int i = 0; i < ifmt_ctx_v->nb_streams; i++) {
-			//Create output AVStream according to input AVStream
-			if(ifmt_ctx_v->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO){
-				AVStream *in_stream = ifmt_ctx_v->streams[i];
-				AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
-				*v_indx_in=i;
-				if (!out_stream) {
-					printf( "Failed allocating output stream\n");
-					ret = AVERROR_UNKNOWN;
-					error_process();
-					return -1;
-
-				}
-
-				*v_indx_out=out_stream->index;
-				out_video_index = *v_indx_out;
-				//Copy the settings of AVCodecContext
-				if (avcodec_copy_context(out_stream->codec, in_stream->codec) < 0) {
-					printf( "Failed to copy context from input to output stream codec context\n");
-					error_process();
-					return -1;
-				}
-
-				out_stream->codec->codec_tag = 0;
-				if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
-					out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
-
-				break;
-
-			}
-		}
-#endif
 		for (int i = 0; i < ifmt_ctx_a->nb_streams; i++) {
+	        out_stream = avformat_new_stream(ofmt_ctx, NULL);
+
 			//Create output AVStream according to input AVStream
-			dec_ctx = ifmt_ctx_a->streams[i]->codec;
+	        in_stream = ifmt_ctx_a->streams[i];
+	        dec_ctx = in_stream->codec;
+	        enc_ctx = out_stream->codec;
 			if(dec_ctx->codec_type==AVMEDIA_TYPE_AUDIO){
+#if 1
 				/*** 初始化in stream的codec 相关, open decoder***/
-				encoder = avcodec_find_decoder(dec_ctx->codec_id);
-				printf("codec_id:%x\n", dec_ctx->codec_id);
-				ret = avcodec_open2(dec_ctx, encoder, NULL);
-				if (ret < 0) {
-					av_log(NULL, AV_LOG_ERROR, "Failed to open decoder for stream #%u\n", i);
-					return ret;
-				}
-				dec_ctx->channel_layout = 1;
-				dec_ctx->channels = 1;
-				dec_ctx->sample_rate = 44100;
-				dec_ctx->sample_fmt = AV_SAMPLE_FMT_S16;
+//				encoder = avcodec_find_decoder(dec_ctx->codec_id);
+//				ret = avcodec_open2(dec_ctx, encoder, NULL);
+//				if (ret < 0) {
+//					av_log(NULL, AV_LOG_ERROR, "Failed to open decoder for stream #%u\n", i);
+//					return ret;
+//				}
+//				dec_ctx->channel_layout = AV_CH_LAYOUT_MONO;
+//				dec_ctx->channels = 1;
+//				dec_ctx->sample_rate = 44100;
+//				dec_ctx->sample_fmt = AV_SAMPLE_FMT_S16;
+#endif
 	            /* In this example, we transcode to same properties (picture size, sample rate etc.). These properties can be changed for output
 	             * streams easily using filters */
 
 				/* User is required to call avcodec_close() and avformat_free_context() to
 				 * clean up the allocation by avformat_new_stream().*/
-#if 1
 
 				/*在转码的情况下，需要执行下列部分***/
-				encoder = avcodec_find_encoder(dec_ctx->codec_id);
-				AVStream *out_stream = avformat_new_stream(ofmt_ctx, dec_ctx->codec);
+				encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
 				enc_ctx = out_stream->codec;
                 enc_ctx->sample_rate = dec_ctx->sample_rate;
-                enc_ctx->channel_layout = dec_ctx->channel_layout;
+                enc_ctx->channel_layout = /*dec_ctx->channel_layout*/AV_CH_LAYOUT_MONO;
                 enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
 
                 /* take first format from list of supported formats */
                 enc_ctx->sample_fmt = encoder->sample_fmts[0];
                 enc_ctx->time_base = (AVRational){1, enc_ctx->sample_rate};
+                printf("output:\ntime_base=%d/%d:sample1 rate:%d, channel_layout:%lld, channels:%d, sample_format:%d, time_base:%d\n",
+                		dec_ctx->time_base.num,
+                		dec_ctx->time_base.den,
+                		dec_ctx->sample_rate,
+                		dec_ctx->channel_layout,
+                		dec_ctx->channels,
+                		dec_ctx->sample_fmt,
+                		dec_ctx->time_base.den);
+
                 /* Third parameter can be used to pass settings to encoder */
                 ret = avcodec_open2(enc_ctx, encoder, NULL);
                 if (ret < 0) {
@@ -284,17 +267,15 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 
 				}
 
+		        printf("sample2 rate:%d, channel_layout:%lld, channels:%d, sample_format:%d, time_base:%d\n",
+		        		enc_ctx->sample_rate,
+		        		enc_ctx->channel_layout,
+		        		enc_ctx->channels,
+		        		enc_ctx->sample_fmt,
+		        		enc_ctx->time_base.den);
+
 				*a_indx_out=out_stream->index;
 				out_audio_index = *a_indx_out;
-#else
-				//Copy the settings of AVCodecContext
-				if (avcodec_copy_context(enc_ctx, dec_ctx) < 0) {
-					printf( "Failed to copy context from input to output stream codec context\n");
-					error_process();
-					return -1;
-
-				}
-#endif
 				out_stream->codec->codec_tag = 0;
 				if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
 					out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
@@ -302,6 +283,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 				out_stream->codec->codec_id = transcoding->get_codec_id(AVMEDIA_TYPE_AUDIO);	//将音频codec_id强制成aac
 				break;
 			}
+
 		}
 
 		printf("==========Output Information==========\n");
@@ -315,6 +297,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 				return -1;
 			}
 		}
+
 		//Write file header
 		if (avformat_write_header(ofmt_ctx, NULL) < 0) {
 			printf( "Error occurred when opening output file\n");
@@ -341,7 +324,7 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 	if (cached_consumed == 0) {
 		for (int i=0; i<cached_packets; i++) {
 			pkt = &(packet_cacher[i]);
-			if (pkt->stream_index == 1) {	//audio
+			if (pkt->stream_index == 0) {	//audio
 				ifmt_ctx=ifmt_ctx_a;
 				*indx_out=a_indx_out;
 				in_stream  = ifmt_ctx->streams[a_indx_in];
@@ -356,7 +339,7 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 					pkt->dts=pkt->pts;
 					pkt->duration=(double)calc_duration/(double)(av_q2d(time_base1)*AV_TIME_BASE);
 					frame_index++;
-					printf("audio PTS:%lld, calc_duration:%lld\n", pkt->pts, calc_duration);
+//					printf("audio PTS:%lld, calc_duration:%lld\n", pkt->pts, calc_duration);
 				}
 
 				transcoding->do_transcoding(ifmt_ctx_a, pkt, a_indx_in, *indx_out);
@@ -369,9 +352,6 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 			}
 
 			out_stream = ofmt_ctx->streams[*indx_out];
-
-
-
 
 			pkt->dts = pkt->pts;
 			AVRational time_base1=in_stream->time_base;
@@ -439,25 +419,14 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	static int a_indx_in=-1,a_indx_out=-1;
 	int indx_out=0;
 	AVStream *in_stream = NULL, *out_stream = NULL;
-//	static Queue *queue = NULL;
 	if (flag == 2)
 		done();
 	//initiallize some context things
-	if (frame_type == 0) {
-		dump_file(frame_data, frame_size, frame_type, video_dump);
-	}
-	else {
-		dump_file(frame_data, frame_size, frame_type, audio_dump);
-	}
+	dump_file(frame_data, frame_size, frame_type, audio_dump);
 
 	if (cache_packets(frame_data, frame_size, pts, dts, frame_type, flag) < 0) {
 		return -1;
 	}
-#ifndef TEST_G711A
-	if (open_input_file(&ifmt_ctx_v, video_dump) < 0) {
-		return -1;
-	}
-#endif
 
 	if (open_input_file(&ifmt_ctx_a, audio_dump) < 0) {
 		return -1;
@@ -466,22 +435,15 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 	if (open_output_file(&v_indx_in, &a_indx_in, &v_indx_out, &a_indx_out)) {
 		return -1;
 	}
+
 	if (transcoding->is_filter_ctx_initialized() == false) {
 		if (transcoding->init_filters(ifmt_ctx_a) < 0)	//todo:这里缺少后续处理，主要是一些释放过程
 			return -1;
 	}
-
 	if (flush_cached_packets(v_indx_in, a_indx_in, v_indx_out, a_indx_out, &indx_out) < 0)
 		return -1;
-	printf("iiiiiiiiii\n");
 	//Get an AVPacket
-	if (frame_type == 0) {
-		ifmt_ctx=ifmt_ctx_v;
-		indx_out=v_indx_out;
-		in_stream  = ifmt_ctx->streams[v_indx_in];
-
-	}
-	else if (frame_type == 1){
+	if (frame_type == 1){
 		ifmt_ctx=ifmt_ctx_a;
 		indx_out=a_indx_out;
 		in_stream  = ifmt_ctx->streams[a_indx_in];
@@ -506,7 +468,7 @@ int AVRecorder::record(uint8_t *frame_data, uint32_t frame_size, uint64_t  pts, 
 #endif
 	}
 
-	if (frame_type == 1) {
+	if (frame_type == 0) {
 		transcoding->do_transcoding(ifmt_ctx_a, &pkt, a_indx_in, indx_out);	//todo: 这里不太规范，以后要改正
 		return 0;
 	}
@@ -536,7 +498,7 @@ int AVRecorder::done() {
 
 	//Write file trailer
 	av_write_trailer(ofmt_ctx);
-
+	printf("ppppppppppppp\n");
 #if USE_H264BSF
 	av_bitstream_filter_close(h264bsfc);
 #endif
@@ -571,7 +533,7 @@ int main(int argc, char* argv[]) {
 
 	CReadFrame* pReadFrameVideo = new CReadFrame();
 	CReadFrame* pReadFrameAudio = new CReadFrame();
-#if TEST_G711A
+
 	AVRecorder* recorder = new AVRecorder();
 
 	audio_input = "audio.g711a";
@@ -580,42 +542,10 @@ int main(int argc, char* argv[]) {
 	iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio, true);
 	while(iRetAudio == 0)
 	{
-		recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 1, 0);
+//		recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 0, 0);
 		iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio, true);
 	}
+	printf("dddddddd\n");
 	recorder->record(pFrameBuffer, ulFrameSizeVideo, ullTimeStampVideo, ullTimeStampVideo, 1, 2);
 
-#else
-
-	video_input = "video.h264";
-	audio_input = "audio.aac";
-	video_dat	= "video.dat";
-	audio_dat	= "audio.dat";
-	pReadFrameVideo->SetIndexFilePath(video_dat);
-	pReadFrameVideo->SetMediaDataFilePath(video_input);
-    pReadFrameAudio->SetIndexFilePath(audio_dat);
-	pReadFrameAudio->SetMediaDataFilePath(audio_input);
-
-	AVRecorder* recorder = new AVRecorder();
-	iRetVideo = pReadFrameVideo->ReadFrame(pFrameBuffer, &ulFrameSizeVideo, &ullTimeStampVideo, 512*1024, &iFrameTypeVideo);
-	iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio);
-	while(iRetVideo == 0 || iRetAudio == 0)
-	{
-
-		if(((iRetAudio == 0 && iRetVideo == 0) && ullTimeStampVideo <ullTimeStampAudio) ||
-			(iRetVideo == 0 && iRetAudio !=0 ))
-		{
-			ullTimeStampVideo -= PTS_OFFSET;
-			recorder->record(pFrameBuffer, ulFrameSizeVideo, ullTimeStampVideo, ullTimeStampVideo, 0, iFrameTypeVideo);
-			iRetVideo = pReadFrameVideo->ReadFrame(pFrameBuffer, &ulFrameSizeVideo, &ullTimeStampVideo, 512*1024, &iFrameTypeVideo);
-		}
-		else if(iRetAudio == 0) {
-//			ullTimeStampAudio -= PTS_OFFSET;
-			recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 1, iFrameTypeAudio);
-			iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio);
-		}
-	}
-	if (iRetAudio != 0 && iRetVideo != 0)
-		recorder->record(pFrameBuffer, ulFrameSizeVideo, ullTimeStampVideo, ullTimeStampVideo, 1, 2);
-#endif
 }
