@@ -82,7 +82,7 @@ AVRecorder::AVRecorder() {
 	out_audio_index = -1;
 	video_dump = "video_dump.h264";
 	audio_dump = "audio_dump.g711a";
-	output = "audio.aac";
+	output = "audio-transcode.aac";
 	video_dump_packets = 0;
 	audio_dump_packets = 0;
 	fp_dump_a = NULL;
