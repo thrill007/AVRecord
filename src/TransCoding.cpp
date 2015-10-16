@@ -8,12 +8,14 @@
 
 AVRecorder::TransCoding::TransCoding() {
 	aud_codec_id = AV_CODEC_ID_AAC;
+	vid_codec_id = AV_CODEC_ID_H264;
 	owner = NULL;
 	filter_ctx = NULL;
 
 }
 AVRecorder::TransCoding::TransCoding(AVRecorder *owner_ptr) {
 	aud_codec_id = AV_CODEC_ID_AAC;
+	vid_codec_id = AV_CODEC_ID_H264;
 	owner = owner_ptr;
 	filter_ctx = NULL;
 }
@@ -21,8 +23,15 @@ AVRecorder::TransCoding::~TransCoding() {
 
 }
 
-AVCodecID AVRecorder::TransCoding::get_codec_id() {
-	return aud_codec_id;
+AVCodecID AVRecorder::TransCoding::get_codec_id(AVMediaType codec_type) {
+	return (codec_type == AVMEDIA_TYPE_AUDIO ? aud_codec_id:vid_codec_id);
+}
+int AVRecorder::TransCoding::set_codec_id(AVMediaType codec_type, AVCodecID codec_id) {
+	if (codec_type == AVMEDIA_TYPE_AUDIO)
+		aud_codec_id = codec_id;
+	else
+		vid_codec_id = codec_id;
+	return 0;
 }
 bool AVRecorder::TransCoding::is_filter_ctx_initialized() {
 	return (filter_ctx != NULL);
@@ -204,6 +213,7 @@ int AVRecorder::TransCoding::init_filters(AVFormatContext *ifmt_ctx)
         if (ret)
             return ret;
     }
+
     return 0;
 }
 
@@ -219,12 +229,32 @@ int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned in
 	enc_pkt.data =NULL;
 	enc_pkt.size =0;
 	av_init_packet(&enc_pkt);
-	ret = avcodec_encode_audio2(owner->ofmt_ctx->streams[stream_index]->codec, &enc_pkt, filt_frame, got_frame);
+
+	AVCodecContext *enc_ctx = owner->ofmt_ctx->streams[stream_index]->codec;
+
+//    enc_ctx->channel_layout = 1;
+//    printf("sample rate:%d, channel_layout:%lld, channels:%d, sample_format:%d, time_base:%d\n",
+//    		enc_ctx->sample_rate,
+//    		enc_ctx->channel_layout,
+//    		enc_ctx->channels,
+//    		enc_ctx->sample_fmt,
+//    		enc_ctx->time_base.den);
+//    printf("frame size:%d\n",filt_frame->nb_samples);
+
+	ret = avcodec_encode_audio2(enc_ctx, &enc_pkt, filt_frame, got_frame);
+
 	av_frame_free(&filt_frame);
-	if (ret < 0)
+	if (ret < 0) {
+//		printf("codec_id:%x\n", owner->ofmt_ctx->streams[stream_index]->codec->codec_id);
+		char err[200];
+		strcpy(err, strerror(ret));
+		printf("error:%s\n", err);
+//		printf("ret value:%d\n", ret);
 		return ret;
+	}
 	if (!(*got_frame))
 		return 0;
+
 	/* prepare packet for muxing */
 	enc_pkt.stream_index = stream_index;
 	enc_pkt.dts =av_rescale_q_rnd(enc_pkt.dts,
@@ -244,13 +274,15 @@ int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned in
 	return ret;
 }
 
-int AVRecorder::TransCoding::filter_encode_write_frame(AVFrame *frame, unsigned int out_index)
+int AVRecorder::TransCoding::filter_encode_write_frame(AVFrame *frame, unsigned int in_index)
 {
 	int ret;
 	AVFrame *filt_frame;
 	av_log(NULL, AV_LOG_INFO, "Pushing decoded frame to filters\n");
 	/* push the decoded frame into the filter graph */
-	ret = av_buffersrc_add_frame_flags(filter_ctx[out_index].buffersrc_ctx,frame,0);
+
+	ret = av_buffersrc_add_frame_flags(filter_ctx[in_index].buffersrc_ctx,frame,0);
+
 	if (ret < 0) {
 		av_log(NULL, AV_LOG_ERROR, "Error while feeding the filter graph\n");
 		return ret;
@@ -263,11 +295,11 @@ int AVRecorder::TransCoding::filter_encode_write_frame(AVFrame *frame, unsigned 
 			break;
 		}
 		av_log(NULL, AV_LOG_INFO, "Pulling filtered frame from filters\n");
-		ret =av_buffersink_get_frame(filter_ctx[out_index].buffersink_ctx, filt_frame);
+		ret =av_buffersink_get_frame(filter_ctx[in_index].buffersink_ctx, filt_frame);
 		if (ret < 0) {
 			/* if nomore frames for output - returns AVERROR(EAGAIN)
 			 * if flushed and no more frames for output - returns AVERROR_EOF
-			 * rewrite retcode to 0 to show it as normal procedure completion
+			 * rewrite ret code to 0 to show it as normal procedure completion
 			 */
 			if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
 				ret= 0;
@@ -275,7 +307,8 @@ int AVRecorder::TransCoding::filter_encode_write_frame(AVFrame *frame, unsigned 
 			break;
 		}
 		filt_frame->pict_type = AV_PICTURE_TYPE_NONE;
-		ret =encode_write_frame(filt_frame, out_index, NULL);
+//		printf("frame pts:%lld\n",filt_frame->pts);
+		ret =encode_write_frame(filt_frame, owner->out_audio_index, NULL);
 		if (ret < 0)
 			break;
 	}
@@ -311,26 +344,23 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
             ret = AVERROR(ENOMEM);
             return -1;
         }
-        AVRational ar = {1, 1000};
         pkt->dts = av_rescale_q_rnd(pkt->dts,
-                /*ifmt_ctx->streams[in_indx]->time_base,*/ar,
+                ifmt_ctx->streams[in_indx]->time_base,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
                  (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
         pkt->pts = av_rescale_q_rnd(pkt->pts,
-                /*ifmt_ctx->streams[in_indx]->time_base*/ar,
+                ifmt_ctx->streams[in_indx]->time_base,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
                 (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
-
         ret = avcodec_decode_audio4(owner->in_stream->codec, frame, &got_frame, pkt);
         if (ret < 0) {
            av_frame_free(&frame);
            av_log(NULL, AV_LOG_ERROR, "Decoding failed\n");
+           return -1;
         }
-        printf("ccccccccccc....\n");
-
         if (got_frame) {
         	frame->pts = av_frame_get_best_effort_timestamp(frame);
-        	ret= filter_encode_write_frame(frame, out_indx);
+        	ret= filter_encode_write_frame(frame, in_indx);
         	av_frame_free(&frame);
         	if (ret< 0)
         		return -1;	//todo:这里缺少后续处理主要是一些释放过程
@@ -349,7 +379,6 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
                 av_log(NULL, AV_LOG_ERROR, "Flushing filter failed\n");
                 return -1;
             }
-
             /* flush encoder */
             ret = flush_encoder(i);
             if (ret < 0) {

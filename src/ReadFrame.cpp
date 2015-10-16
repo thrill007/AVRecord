@@ -22,7 +22,7 @@ CReadFrame::~CReadFrame()
 	}
 }
 
-int CReadFrame::SetIndexFilePath(char*  pFrameIndexPath)
+int CReadFrame::SetIndexFilePath(const char*  pFrameIndexPath)
 {
 	if (pFrameIndexPath != NULL)
 	{
@@ -38,7 +38,7 @@ int CReadFrame::SetIndexFilePath(char*  pFrameIndexPath)
 	return 0;
 }
 
-int CReadFrame::SetMediaDataFilePath(char*   pFrameDump)
+int CReadFrame::SetMediaDataFilePath(const char*   pFrameDump)
 {
 	if (pFrameDump != NULL)
 	{
@@ -64,6 +64,7 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 	uint64_t   iFrameTimeStamp = 0;
 	int   iFrameType = 0;
 	char  strLine[256] = {0};
+
 	if (m_pIndexFile != NULL)
 	{
 		pLineEnd = fgets(strLine, 256, m_pIndexFile);
@@ -82,6 +83,26 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 	{
 		return 1;
 	}
+
+	iReadCount = fread(pFrameData+iReadCount, 1, iFrameSize-iReadCount, m_pFrameDataFile);
+	while (iReadCount < iFrameSize)
+	{
+		iReadCount+= fread(pFrameData + iReadCount, 1, iFrameSize - iReadCount, m_pFrameDataFile);
+	}
+
+	*piFrameSize = iFrameSize;
+	*pillFrameTimeStamp = iFrameTimeStamp;
+	*piFrameType = iFrameType;
+
+	return 0;
+}
+
+int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t*  pillFrameTimeStamp, int  piMaxBufferSize, int* piFrameType, bool is_g711)
+{
+	int   iReadCount = 0;
+	uint64_t   iFrameTimeStamp = AV_NOPTS_VALUE;
+	int   iFrameSize = 960;
+	int   iFrameType = 0;
 
 	iReadCount = fread(pFrameData+iReadCount, 1, iFrameSize-iReadCount, m_pFrameDataFile);
 	while (iReadCount < iFrameSize)

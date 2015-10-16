@@ -27,9 +27,9 @@ extern "C"
  *      Author: lifeng
  */
 #define PTS_OFFSET 38722865
-#define AUDIO_DUMP_PACKETS 10
-#define VIDEO_DUMP_PACKETS 15
-#define COEFF 5
+#define AUDIO_DUMP_PACKETS 20
+#define VIDEO_DUMP_PACKETS 1
+#define COEFF 1
 
 class AVRecorder
 {
@@ -54,9 +54,9 @@ private:
 	AVBitStreamFilterContext* aacbsfc;
 	AVBitStreamFilterContext* h264bsfc;
 
-	AVPacket *packet_cache;
+	AVPacket *packet_cacher;
 	int cached_consumed;
-
+	int frame_index;
 
 	class TransCoding {
 	private:
@@ -68,6 +68,7 @@ private:
 		FilteringContext *filter_ctx;
 		AVRecorder *owner;
 	    AVCodecID aud_codec_id;
+	    AVCodecID vid_codec_id;
 
 	private:
 		int init_filter(FilteringContext* fctx, AVCodecContext *dec_ctx, AVCodecContext *enc_ctx, const char *filter_spec);
@@ -78,7 +79,8 @@ private:
 		TransCoding();
 		TransCoding(AVRecorder *owner);
 		~TransCoding();
-		AVCodecID get_codec_id();
+		AVCodecID get_codec_id(AVMediaType codec_type);
+		int set_codec_id(AVMediaType codec_type, AVCodecID codec_id);
 		int init_filters(AVFormatContext *ifmt_ctx);
 		int do_transcoding(AVFormatContext *ifmt_ctx, AVPacket *pkt,int in_index, int out_index);
 		bool is_filter_ctx_initialized();
