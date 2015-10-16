@@ -44,7 +44,7 @@ FIX: H.264 in some container format (FLV, MP4, MKV etc.) need
 H.264 in some container (MPEG2TS) don't need this BSF.
 */
 //'1': Use H.264 Bitstream Filter
-#define USE_H264BSF 1
+#define USE_H264BSF 0
 
 /*
 FIX:AAC in some container format (FLV, MP4, MKV etc.) need
@@ -107,14 +107,16 @@ int AVRecorder::dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t fram
 		if (!fp_dump_a) return -1;
 	}
 	//dump xx 个音频包
-	if (frame_type == 0 && audio_dump_packets < AUDIO_DUMP_PACKETS) {
-		fwrite(frame_data, 1, frame_size, fp_dump_a);
-		audio_dump_packets++;
-		if (audio_dump_packets >= AUDIO_DUMP_PACKETS) {
-			fflush(fp_dump_a);
-			fclose(fp_dump_a);
+	if (frame_type == 0) {
+		if (audio_dump_packets < AUDIO_DUMP_PACKETS) {
+			fwrite(frame_data, 1, frame_size, fp_dump_a);
+			audio_dump_packets++;
+			if (audio_dump_packets >= AUDIO_DUMP_PACKETS) {
+				fflush(fp_dump_a);
+				fclose(fp_dump_a);
 
-			return 0;
+				return 0;
+			}
 		}
 	}
 	//dump xx 个视频包
@@ -134,7 +136,7 @@ int AVRecorder::dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t fram
 int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, int key_frame) {
 	if (packet_cache == NULL)
 		packet_cache = new AVPacket[COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS*sizeof(AVPacket)];
-	if (audio_dump_packets < AUDIO_DUMP_PACKETS || video_dump_packets < VIDEO_DUMP_PACKETS) {
+	if (cached_packets < COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS) {
 		uint8_t *data = new uint8_t[frame_size];
 		memcpy(data, frame_data, frame_size);
 		packet_cache[cached_packets].data = data;
