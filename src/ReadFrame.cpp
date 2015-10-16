@@ -101,20 +101,23 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 {
 	int   iReadCount = 0;
 	uint64_t   iFrameTimeStamp = AV_NOPTS_VALUE;
-	int   iFrameSize = 960;
+	int   iFrameSize = 1024;
 	int   iFrameType = 0;
 
-	iReadCount = fread(pFrameData+iReadCount, 1, iFrameSize-iReadCount, m_pFrameDataFile);
-	while (iReadCount < iFrameSize)
-	{
-		iReadCount+= fread(pFrameData + iReadCount, 1, iFrameSize - iReadCount, m_pFrameDataFile);
-	}
+	iReadCount = fread(pFrameData, 1, iFrameSize-iReadCount, m_pFrameDataFile);
+	printf("read count:%d\n", iReadCount);
+//	while (iReadCount < iFrameSize)
+//	{
+//		iReadCount+= fread(pFrameData + iReadCount, 1, iFrameSize - iReadCount, m_pFrameDataFile);
+//	}
 
 	*piFrameSize = iFrameSize;
 	*pillFrameTimeStamp = iFrameTimeStamp;
 	*piFrameType = iFrameType;
-
-	return 0;
+	if (iReadCount == 0)
+		return 1;
+	else
+		return 0;
 }
 
 int CReadFrame::Reset()

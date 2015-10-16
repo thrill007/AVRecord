@@ -542,7 +542,7 @@ int main(int argc, char* argv[]) {
 	iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio, true);
 	while(iRetAudio == 0)
 	{
-//		recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 0, 0);
+		recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 0, 0);
 		iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio, true);
 	}
 	printf("dddddddd\n");
