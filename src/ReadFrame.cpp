@@ -100,18 +100,19 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t*  pillFrameTimeStamp, int  piMaxBufferSize, int* piFrameType, bool is_g711)
 {
 	int   iReadCount = 0;
-	uint64_t   iFrameTimeStamp = AV_NOPTS_VALUE;
+	static uint64_t   iFrameTimeStamp = 0;
 	int   iFrameSize = 1024;
 	int   iFrameType = 0;
 
 	iReadCount = fread(pFrameData, 1, iFrameSize-iReadCount, m_pFrameDataFile);
-	printf("read count:%d\n", iReadCount);
+//	printf("read count:%d\n", iReadCount);
 //	while (iReadCount < iFrameSize)
 //	{
 //		iReadCount+= fread(pFrameData + iReadCount, 1, iFrameSize - iReadCount, m_pFrameDataFile);
 //	}
 
 	*piFrameSize = iFrameSize;
+//	iFrameTimeStamp += 1024;
 	*pillFrameTimeStamp = iFrameTimeStamp;
 	*piFrameType = iFrameType;
 	if (iReadCount == 0)

@@ -180,6 +180,7 @@ int AVRecorder::TransCoding::init_filters(AVFormatContext *ifmt_ctx)
 
 
 int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned int stream_index, int* got_frame) {
+	static uint64_t prev_pts = 0;
 	int ret;
 	int got_frame_local;
 	AVPacket enc_pkt;
@@ -193,13 +194,9 @@ int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned in
 
 	AVCodecContext *enc_ctx = owner->ofmt_ctx->streams[stream_index]->codec;
 
-//    printf("frame size:%d\n",filt_frame->nb_samples);
-
-	ret = avcodec_encode_audio2(enc_ctx, &enc_pkt, filt_frame, got_frame);
-
+    ret = avcodec_encode_audio2(enc_ctx, &enc_pkt, filt_frame, got_frame);
 	av_frame_free(&filt_frame);
 	if (ret < 0) {
-//		printf("codec_id:%x\n", owner->ofmt_ctx->streams[stream_index]->codec->codec_id);
 		char err[200];
 		strcpy(err, strerror(ret));
 		printf("error:%s\n", err);
@@ -224,6 +221,13 @@ int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned in
 			owner->ofmt_ctx->streams[stream_index]->time_base);
 	av_log(NULL,AV_LOG_DEBUG, "Muxing frame\n");
 	/* mux encoded frame */
+#define USE_AACBSF 1
+#if USE_AACBSF
+	printf("aacbsfc2:%p\n", owner->aacbsfc);
+    printf("pts3:%lld\n", enc_pkt.pts);
+
+	av_bitstream_filter_filter(owner->aacbsfc, owner->ofmt_ctx->streams[stream_index]->codec, NULL, &(enc_pkt.data), &(enc_pkt.size), enc_pkt.data, enc_pkt.size, 0);
+#endif
 	ret =av_interleaved_write_frame(owner->ofmt_ctx, &enc_pkt);
 	return ret;
 }
@@ -317,6 +321,7 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
             ret = AVERROR(ENOMEM);
             return -1;
         }
+
         pkt->dts = av_rescale_q_rnd(pkt->dts,
                 ifmt_ctx->streams[in_indx]->time_base,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
@@ -325,6 +330,7 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
                 ifmt_ctx->streams[in_indx]->time_base,
                 ifmt_ctx->streams[in_indx]->codec->time_base,
                 (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+
         ret = avcodec_decode_audio4(owner->in_stream->codec, decoded_frame, &got_frame, pkt);
         if (ret < 0) {
            av_frame_free(&decoded_frame);

@@ -52,7 +52,7 @@ FIX:AAC in some container format (FLV, MP4, MKV etc.) need
 "aac_adtstoasc" bitstream filter (BSF)
 */
 //'1': Use AAC Bitstream Filter
-#define USE_AACBSF 0
+#define USE_AACBSF 1
 #define OPTIMIZE 1
 #define OPT_DEBUG 0
 #define DUMMY_PTS 0
@@ -82,7 +82,7 @@ AVRecorder::AVRecorder() {
 	out_audio_index = -1;
 	video_dump = "video_dump.h264";
 	audio_dump = "audio_dump.g711a";
-	output = "audio-transcode.aac";
+	output = "output.mp4";
 	video_dump_packets = 0;
 	audio_dump_packets = 0;
 	fp_dump_a = NULL;
@@ -328,7 +328,7 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 				ifmt_ctx=ifmt_ctx_a;
 				*indx_out=a_indx_out;
 				in_stream  = ifmt_ctx->streams[a_indx_in];
-
+#if 0
 				if(pkt->pts==AV_NOPTS_VALUE){
 					//Write PTS
 					AVRational time_base1=in_stream->time_base;
@@ -339,8 +339,8 @@ int AVRecorder::flush_cached_packets(int v_indx_in, int a_indx_in, int v_indx_ou
 					pkt->dts=pkt->pts;
 					pkt->duration=(double)calc_duration/(double)(av_q2d(time_base1)*AV_TIME_BASE);
 					frame_index++;
-//					printf("audio PTS:%lld, calc_duration:%lld\n", pkt->pts, calc_duration);
 				}
+#endif
 
 				transcoding->do_transcoding(ifmt_ctx_a, pkt, a_indx_in, *indx_out);
 				continue;
