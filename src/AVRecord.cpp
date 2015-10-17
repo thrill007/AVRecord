@@ -505,6 +505,7 @@ int AVRecorder::done() {
 #if USE_AACBSF
 	av_bitstream_filter_close(aacbsfc);
 #endif
+	transcoding->flush_filter_and_encoder(ifmt_ctx_a);
 	error_process();
 	return 0;
 }

@@ -83,6 +83,7 @@ private:
 		int set_codec_id(AVMediaType codec_type, AVCodecID codec_id);
 		int init_filters(AVFormatContext *ifmt_ctx);
 		int do_transcoding(AVFormatContext *ifmt_ctx, AVPacket *pkt,int in_index, int out_index);
+		int flush_filter_and_encoder(AVFormatContext *ifmt_ctx);
 		bool is_filter_ctx_initialized();
 	};
 	TransCoding *transcoding;

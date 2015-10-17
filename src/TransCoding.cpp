@@ -286,7 +286,25 @@ int AVRecorder::TransCoding::flush_encoder(unsigned int in_indx)
     }
     return ret;
 }
-
+int AVRecorder::TransCoding::flush_filter_and_encoder(AVFormatContext *ifmt_ctx) {
+	/* flush filters and encoders */
+	for (int i = 0; i < ifmt_ctx->nb_streams; i++) {
+		/* flush filter */
+		if (!filter_ctx[i].filter_graph)
+			continue;
+		int ret = filter_encode_write_frame(NULL, i);
+		if (ret < 0) {
+			av_log(NULL, AV_LOG_ERROR, "Flushing filter failed\n");
+			return -1;
+		}
+		/* flush encoder */
+		ret = flush_encoder(i);
+		if (ret < 0) {
+			av_log(NULL, AV_LOG_ERROR, "Flushing encoder failed\n");
+			return -1;
+		}
+	}
+}
 int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket *pkt, int in_indx, int out_indx) {
 	static FILE *fp_pcm = NULL;
 
@@ -315,23 +333,7 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
         }
         if (got_frame) {
         	decoded_frame->pts = av_frame_get_best_effort_timestamp(decoded_frame);
-#if 1
         	ret= filter_encode_write_frame(decoded_frame, in_indx);
-#else
-        	if (!fp_pcm) {
-        		fp_pcm = fopen("audio.pcm", "wb");
-        	}
-            int data_size = av_samples_get_buffer_size(NULL, owner->in_stream->codec->channels,
-                                                       decoded_frame->nb_samples,
-                                                       owner->in_stream->codec->sample_fmt, 1);
-            if (data_size < 0) {
-                /* This should not occur, checking just for paranoia */
-                fprintf(stderr, "Failed to calculate data size\n");
-                exit(1);
-            }
-            fwrite(decoded_frame->data[0], 1, data_size, fp_pcm);
-
-#endif
         	av_frame_free(&decoded_frame);
         	if (ret< 0)
         		return -1;	//todo:这里缺少后续处理主要是一些释放过程
@@ -339,25 +341,6 @@ int AVRecorder::TransCoding::do_transcoding(AVFormatContext *ifmt_ctx, AVPacket 
         else {
         	av_frame_free(&decoded_frame);
         }
-#if 0
-        /* flush filters and encoders */
-        for (int i = 0; i < ifmt_ctx->nb_streams; i++) {
-            /* flush filter */
-            if (!filter_ctx[i].filter_graph)
-                continue;
-            ret = filter_encode_write_frame(NULL, i);
-            if (ret < 0) {
-                av_log(NULL, AV_LOG_ERROR, "Flushing filter failed\n");
-                return -1;
-            }
-            /* flush encoder */
-            ret = flush_encoder(i);
-            if (ret < 0) {
-                av_log(NULL, AV_LOG_ERROR, "Flushing encoder failed\n");
-                return -1;
-            }
-        }
-#endif
     	return 0;
     }
 
