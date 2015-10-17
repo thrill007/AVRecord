@@ -28,8 +28,8 @@ extern "C"
  */
 #define PTS_OFFSET 38722865
 #define AUDIO_DUMP_PACKETS 20
-#define VIDEO_DUMP_PACKETS 1
-#define COEFF 1
+#define VIDEO_DUMP_PACKETS 15
+#define COEFF 3
 
 class AVRecorder
 {
