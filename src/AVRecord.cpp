@@ -146,7 +146,7 @@ int AVRecorder::dump_file(uint8_t *frame_data, uint32_t frame_size, uint8_t fram
 int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, int key_frame) {
 	if (packet_cacher == NULL)
 		packet_cacher = new AVPacket[COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS*sizeof(AVPacket)];
-	if (cached_packets < COEFF*AUDIO_DUMP_PACKETS*VIDEO_DUMP_PACKETS) {
+	if (audio_dump_packets < AUDIO_DUMP_PACKETS || video_dump_packets < VIDEO_DUMP_PACKETS) {
 		uint8_t *data = new uint8_t[frame_size + FF_INPUT_BUFFER_PADDING_SIZE];
 		memcpy(data, frame_data, frame_size);
 		packet_cacher[cached_packets].data = data;
@@ -154,7 +154,7 @@ int AVRecorder::cache_packets(uint8_t *frame_data, uint32_t frame_size, uint64_t
 		packet_cacher[cached_packets].pts = pts;
 		packet_cacher[cached_packets].dts = dts;
 		if (key_frame == 1) { //case i frame
-			packet_cacher[cached_packets].flags |= AV_PKT_FLAG_KEY;
+//			packet_cacher[cached_packets].flags |= AV_PKT_FLAG_KEY;
 		}
 		packet_cacher[cached_packets++].stream_index = frame_type;
 		return -1;
@@ -551,7 +551,8 @@ int AVRecorder::done() {
 #if USE_AACBSF
 	av_bitstream_filter_close(aacbsfc);
 #endif
-	transcoding->flush_filter_and_encoder(ifmt_ctx_a);
+	if (strstr(audio_dump, "g711") != NULL)
+		transcoding->flush_filter_and_encoder(ifmt_ctx_a);
 	error_process();
 	return 0;
 }
@@ -601,6 +602,8 @@ int main(int argc, char* argv[]) {
 			iRetVideo = pReadFrameVideo->ReadFrame(pFrameBuffer, &ulFrameSizeVideo, &ullTimeStampVideo, 512*1024, &iFrameTypeVideo);
 		}
 		else if(iRetAudio == 0) {
+			if (strstr(argv[2], "g711") == NULL)
+				ullTimeStampAudio -= PTS_OFFSET;
 			recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 1, 0);
 			iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio);
 		}
