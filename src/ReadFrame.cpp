@@ -1,12 +1,25 @@
 #include "ReadFrame.h"
 #include "string.h"
 
-CReadFrame::CReadFrame()
+CReadFrame::CReadFrame(const char *input)
 {
     m_iCurrentFrameIndex = 0;
     m_pIndexFile = NULL;
     m_pFrameDataFile = NULL;
 	m_iTotalFrameCount = 0;
+	if (strstr(input, "h264") != NULL) {
+		SetMediaDataFilePath(input);
+		SetIndexFilePath("video.dat");
+	}
+	else if (strstr(input, "aac") != NULL) {
+		SetMediaDataFilePath(input);
+		SetIndexFilePath("audio.dat");
+	}
+	else if (strstr(input, "g711") != NULL) {
+		SetMediaDataFilePath(input);
+		SetIndexFilePath(NULL);
+	}
+
 }
 
 CReadFrame::~CReadFrame()
@@ -60,10 +73,22 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 	char*  pLineEnd = NULL;
 	int   iRet = 0;
 	int   iReadCount = 0;
-	int   iFrameSize = 0;
+	int   iFrameSize = 1024;
 	uint64_t   iFrameTimeStamp = 0;
 	int   iFrameType = 0;
 	char  strLine[256] = {0};
+
+
+	if (m_pIndexFile == NULL) {	//音频是G711A的时候走这里
+		iReadCount = fread(pFrameData, 1, iFrameSize-iReadCount, m_pFrameDataFile);
+		*piFrameSize = iFrameSize;
+		*pillFrameTimeStamp = iFrameTimeStamp;
+		*piFrameType = iFrameType;
+		if (iReadCount == 0)
+			return 1;
+		else
+			return 0;
+	}
 
 	if (m_pIndexFile != NULL)
 	{
@@ -97,29 +122,6 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 	return 0;
 }
 
-int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t*  pillFrameTimeStamp, int  piMaxBufferSize, int* piFrameType, bool is_g711)
-{
-	int   iReadCount = 0;
-	static uint64_t   iFrameTimeStamp = 0;
-	int   iFrameSize = 1024;
-	int   iFrameType = 0;
-
-	iReadCount = fread(pFrameData, 1, iFrameSize-iReadCount, m_pFrameDataFile);
-//	printf("read count:%d\n", iReadCount);
-//	while (iReadCount < iFrameSize)
-//	{
-//		iReadCount+= fread(pFrameData + iReadCount, 1, iFrameSize - iReadCount, m_pFrameDataFile);
-//	}
-
-	*piFrameSize = iFrameSize;
-//	iFrameTimeStamp += 1024;
-	*pillFrameTimeStamp = iFrameTimeStamp;
-	*piFrameType = iFrameType;
-	if (iReadCount == 0)
-		return 1;
-	else
-		return 0;
-}
 
 int CReadFrame::Reset()
 {

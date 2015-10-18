@@ -223,8 +223,8 @@ int AVRecorder::TransCoding::encode_write_frame(AVFrame *filt_frame, unsigned in
 	/* mux encoded frame */
 #define USE_AACBSF 1
 #if USE_AACBSF
-	printf("aacbsfc2:%p\n", owner->aacbsfc);
-    printf("pts3:%lld\n", enc_pkt.pts);
+//	printf("aacbsfc2:%p\n", owner->aacbsfc);
+//    printf("pts3:%lld\n", enc_pkt.pts);
 
 	av_bitstream_filter_filter(owner->aacbsfc, owner->ofmt_ctx->streams[stream_index]->codec, NULL, &(enc_pkt.data), &(enc_pkt.size), enc_pkt.data, enc_pkt.size, 0);
 #endif

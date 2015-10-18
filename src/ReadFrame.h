@@ -6,12 +6,11 @@
 class CReadFrame
 {
 public:
-    CReadFrame();
+    CReadFrame(const char *input);
 	~CReadFrame();
 	int SetIndexFilePath(const char*  pFrameIndexPath);
 	int SetMediaDataFilePath(const char*   pFrameDump);
 	int ReadFrame(unsigned char* pFrameData, int*  iFrameSize, uint64_t*  pillFrameTimeStamp, int  iMaxBufferSize, int* piFrameType);
-	int ReadFrame(unsigned char* pFrameData, int*  iFrameSize, uint64_t*  pillFrameTimeStamp, int  iMaxBufferSize, int* piFrameType, bool is_g711);
 
 	int Reset();
 private:

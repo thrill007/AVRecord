@@ -39,8 +39,10 @@ private:
 	AVFormatContext *ofmt_ctx;
 	AVStream *in_stream;
 	AVStream *out_stream;
-	const char *video_dump;
-	const char* audio_dump;
+	char *video_index;
+	char *audio_index;
+	char *video_dump;
+	char* audio_dump;
 	const char* output;
 	uint8_t out_video_index;
 	uint8_t out_audio_index;
@@ -89,7 +91,7 @@ private:
 	TransCoding *transcoding;
 
 public:
-	AVRecorder();
+	AVRecorder(const char *video_input, const char *audio_input, const char *output);
 	~AVRecorder();
 	int prepare(const char *ofile);
 	int record(uint8_t *frame_data, uint32_t frame_size, uint64_t pts, uint64_t dts, uint8_t frame_type, uint8_t flag);
