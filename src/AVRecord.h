@@ -26,7 +26,7 @@ extern "C"
  *  Created on: 2015-9-26
  *      Author: lifeng
  */
-#define PTS_OFFSET 38722865
+
 #define AUDIO_DUMP_PACKETS 20
 #define VIDEO_DUMP_PACKETS 15
 #define COEFF 3

@@ -287,7 +287,7 @@ int AVRecorder::open_output_file(int *v_indx_in, int *a_indx_in, int *v_indx_out
 					encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
 					enc_ctx = out_stream->codec;
 	                enc_ctx->sample_rate = dec_ctx->sample_rate;
-	                enc_ctx->channel_layout = /*dec_ctx->channel_layout*/AV_CH_LAYOUT_MONO;
+	                enc_ctx->channel_layout = /*dec_ctx->channel_layout*/AV_CH_LAYOUT_STEREO;
 	                enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
 
 	                /* take first format from list of supported formats */
@@ -544,7 +544,6 @@ int AVRecorder::done() {
 
 	//Write file trailer
 	av_write_trailer(ofmt_ctx);
-	printf("ppppppppppppp\n");
 #if USE_H264BSF
 	av_bitstream_filter_close(h264bsfc);
 #endif
@@ -573,9 +572,7 @@ int main(int argc, char* argv[]) {
 	uint64_t      ullTimeStampAudio = 0;
 	int         iFrameTypeAudio = 0;
 
-	const char *video_input, *audio_input;
-	const char *video_index, *audio_index;
-	const char *output;
+	uint64_t video_pts;
 
     if (argc != 4) {
         av_log(NULL, AV_LOG_ERROR, "Usage: %s <video input file> <audio input file> <output file>\n", argv[0]);
@@ -591,22 +588,27 @@ int main(int argc, char* argv[]) {
 
 	iRetVideo = pReadFrameVideo->ReadFrame(pFrameBuffer, &ulFrameSizeVideo, &ullTimeStampVideo, 512*1024, &iFrameTypeVideo);
 	iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio);
-	printf("qqqqq\n");
 	while(iRetVideo == 0 || iRetAudio == 0)
 	{
-		if(((iRetAudio == 0 && iRetVideo == 0) && ullTimeStampVideo <ullTimeStampAudio) ||
+		if (strstr(argv[2], "g711") != NULL) {
+			video_pts = ullTimeStampVideo * 90;
+		}
+		else {
+			video_pts = ullTimeStampVideo;
+		}
+
+		if(((iRetAudio == 0 && iRetVideo == 0) && video_pts <ullTimeStampAudio) ||
 			(iRetVideo == 0 && iRetAudio !=0 ))
 		{
-			ullTimeStampVideo -= PTS_OFFSET;
 			recorder->record(pFrameBuffer, ulFrameSizeVideo, ullTimeStampVideo, ullTimeStampVideo, 0, iFrameTypeVideo);
 			iRetVideo = pReadFrameVideo->ReadFrame(pFrameBuffer, &ulFrameSizeVideo, &ullTimeStampVideo, 512*1024, &iFrameTypeVideo);
 		}
 		else if(iRetAudio == 0) {
-			if (strstr(argv[2], "g711") == NULL)
-				ullTimeStampAudio -= PTS_OFFSET;
 			recorder->record(pFrameBufferAudio, ulFrameSizeAudio, ullTimeStampAudio, ullTimeStampAudio, 1, 0);
 			iRetAudio = pReadFrameAudio->ReadFrame(pFrameBufferAudio, &ulFrameSizeAudio, &ullTimeStampAudio, 16*1024, &iFrameTypeAudio);
 		}
+		printf("vpts:%lld, apts:%lld\n", ullTimeStampVideo, ullTimeStampAudio);
+
 	}
 	recorder->record(pFrameBuffer, ulFrameSizeVideo, ullTimeStampVideo, ullTimeStampVideo, 1, 2);
 

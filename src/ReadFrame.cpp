@@ -77,11 +77,14 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 	uint64_t   iFrameTimeStamp = 0;
 	int   iFrameType = 0;
 	char  strLine[256] = {0};
+	static uint64_t prev_ts = 0;	//单位为毫秒
 
 
 	if (m_pIndexFile == NULL) {	//音频是G711A的时候走这里
 		iReadCount = fread(pFrameData, 1, iFrameSize-iReadCount, m_pFrameDataFile);
 		*piFrameSize = iFrameSize;
+		iFrameTimeStamp = prev_ts + 1024 ;
+		prev_ts = iFrameTimeStamp;
 		*pillFrameTimeStamp = iFrameTimeStamp;
 		*piFrameType = iFrameType;
 		if (iReadCount == 0)
@@ -117,6 +120,7 @@ int CReadFrame::ReadFrame(unsigned char* pFrameData, int*  piFrameSize, uint64_t
 
 	*piFrameSize = iFrameSize;
 	*pillFrameTimeStamp = iFrameTimeStamp;
+	*pillFrameTimeStamp -= PTS_INIT_VAL;
 	*piFrameType = iFrameType;
 
 	return 0;
@@ -154,8 +158,6 @@ int   CReadFrame::ParseFrameInfoLine(char*   pFrameInfoLine, int*  piFrameSize, 
 		pBread += strlen("flag:");
 		sscanf(pBread, "%d", &iFrameType);
 	}
-
-
 
 	*piFrameSize = iFrameSize;
 	*pillFrameTimeStamp = iTimeStamp;

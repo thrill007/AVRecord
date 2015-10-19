@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 #include "libavformat/avformat.h"
+
+#define PTS_INIT_VAL 38722865
 class CReadFrame
 {
 public:
